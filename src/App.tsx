@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import "bootstrap/dist/css/bootstrap.min.css";
-import { Button, ButtonGroup, ListGroup } from "react-bootstrap";
+import { Button, ButtonGroup, Form, ListGroup } from "react-bootstrap";
 
 type User = {
   id: string;
@@ -29,6 +29,21 @@ const people: User[] = [
     role: "designer",
   },
 ];
+
+type MessageToObject = {
+  payload: {
+    filter: User["role"] | "all";
+  };
+  type: "object";
+};
+
+type MessageToString = {
+  text: string;
+  type: "string";
+};
+
+type MessageTo = MessageToObject | MessageToString;
+
 function App() {
   const [users, setUsers] = useState<User[]>(people);
   const [filter, setFilter] = useState<User["role"] | "all">("all");
@@ -36,32 +51,55 @@ function App() {
     (user) => filter === "all" || user.role === filter
   );
 
-  useEffect(() => {
-    console.log("Child App Loaded");
-    const handleMessageFromParent = (event: MessageEvent) => {
-      // Проверка источника сообщения, чтобы избежать обработки сообщений от нежелательных источников
-      if (event.origin !== 'http://localhost:5173') {
-        return;
+  const [messageFromParent, setMessageFromParent] = useState("");
+
+  const messageHandler = useCallback((event: MessageEvent) => {
+    if (event.origin !== "http://localhost:5173") return;
+    if (typeof event.data !== "string") return;
+    let eventMessage: MessageTo;
+
+    try {
+      eventMessage = JSON.parse(event.data);
+    } catch (error) {
+      console.error("Error parsing JSON", error);
+      return;
+    }
+
+      if (eventMessage.type === "object") {
+        setFilter(eventMessage.payload.filter);
+        return
+      } 
+      if (eventMessage.type === "string") {
+        setMessageFromParent(eventMessage.text);
+        return
       }
-
-      // Выводим сообщение, полученное от родительского окна
-      console.log('Received message from parent:', event.data);
-      setFilter(event.data);
-    };
-
-    // Добавление слушателя события message
-    window.addEventListener('message', handleMessageFromParent);
-
-    // Отписываемся от события при размонтировании компонента
-    return () => {
-      window.removeEventListener('message', handleMessageFromParent);
-    };
   }, []);
 
-  const sendMessageToParent = (message: User["role"] | "all") => {
-    // Отправляем сообщение родительскому окну
-    window.parent.postMessage(message, "http://localhost:5173");
+  const sendMessageToParent = useCallback((message: MessageTo) => {
+    // if (window.parent.origin !== "http://localhost:5173") return;
+    window.parent.postMessage(
+      JSON.stringify(message),
+      "http://localhost:5173/"
+    );
+  }
+  , []);
+
+  useEffect(() => {
+    window.addEventListener("message", messageHandler);
+    return () => {
+      window.removeEventListener("message", messageHandler);
+    };
+  }, [messageHandler]);
+
+  const [inputValue, setInputValue] = useState("");
+  const handleChangeInputValue = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputValue(e.target.value);
+    sendMessageToParent({ text: e.target.value, type: "string" });
+  };
+
+  const handleClick = (message: User["role"] | "all") => {
     setFilter(message);
+    sendMessageToParent({ payload: { filter: message }, type: "object" });
   };
 
   return (
@@ -69,33 +107,33 @@ function App() {
       <h1>Child App</h1>
       <ButtonGroup>
         <Button
-          onClick={() => sendMessageToParent("all")}
+          onClick={() => handleClick("all")}
           variant="outline-primary"
           active={filter === "all"}
         >
           all
         </Button>
         <Button
-          onClick={() => sendMessageToParent("developer")}
+          onClick={() => handleClick("developer")}
           variant="outline-primary"
           active={filter === "developer"}
         >
           developers
         </Button>
         <Button
-          onClick={() => sendMessageToParent("manager")}
+          onClick={() => handleClick("manager")}
           variant="outline-primary"
           active={filter === "manager"}
         >
           managers
         </Button>
         <Button
-          onClick={() => sendMessageToParent("designer")}
+          onClick={() => handleClick("designer")}
           variant="outline-primary"
           active={filter === "designer"}
-          >
+        >
           designers
-          </Button>
+        </Button>
       </ButtonGroup>
       <ListGroup>
         {filteredUsers.map((user) => (
@@ -104,6 +142,19 @@ function App() {
           </ListGroup.Item>
         ))}
       </ListGroup>
+      <div className="mt-5">
+        <h2 className="h4">Message from parent</h2>
+        <pre>{messageFromParent || "No message from parent yet..."}</pre>
+        <Form>
+          <h2 className="h4">Message to parent</h2>
+          <Form.Control
+            className="mt-3"
+            value={inputValue}
+            onChange={handleChangeInputValue}
+            placeholder="Enter a message..."
+          />
+        </Form>
+      </div>
     </div>
   );
 }
